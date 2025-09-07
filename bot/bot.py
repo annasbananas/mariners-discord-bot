@@ -4,6 +4,7 @@ import asyncio
 from pytz import timezone
 from constants import *
 from utils import *
+from file_manager import get_status_from_file, save_status_to_file
 
 def setup_client():
     intents = discord.Intents.default()
@@ -13,32 +14,50 @@ def setup_client():
 
 client = setup_client()
 
-class StateManager():
+class MarinersDiscordBot():
     def __init__(self, client):
         self.client = client
-        self.notified = {
-            "start": set(),
-            "final": set(),
-        }
         self.channel = None
 
     async def add_custom_emoji_to_message(self, message, emoji_name):
+        """Adds a custom emoji to a Discord message."""
         emoji = get(self.channel.guild.emojis, name=emoji_name)
         if emoji:
             message.add_reaction(emoji)
 
     async def check_statuses(self, status, game_id, mariners, opponent):
-        # Check statuses
+        """
+        Checks the game status and determines whether a message should be sent or not.
+        Currently sends messages when the game is about to start and when it finishes. 
+        This bot uses a simplified version of the status from MLB's website to track if either message has been sent.
+        """
+
+        simplified_status = STARTED_STATUS if status in LIVE_STATUSES else FINISHED_STATUS # simplify status to make it easy to differentiate between started and finished
+        current_status = get_status_from_file() # safer to update every loop than store in memory and risk it not updating
+        
+        # Message for current game and status has already been sent, skip this loop
+        if (
+            game_id == current_status.get("game_id", "") and
+            simplified_status == current_status.get("status", "")
+        ):
+            return
+
         self.game_started(status, game_id, mariners, opponent)
         self.game_finished(status, game_id, mariners, opponent)
 
     async def game_started(self, game_status, game_id, mariners_team, opponent_team):
-        if game_status in LIVE_STATUSES and game_id not in self.notified["start"]:
+        """
+        Checks if game has started and sends a message when it is about to start
+        """
+        if game_status in LIVE_STATUSES:
             await self.channel.send(f"🚨 The game is about to start! {mariners_team['team']['name']} vs. {opponent_team['team']['name']} 🚨")
-            self.notified["start"].add(game_id)
+            save_status_to_file(STARTED_STATUS, game_id)
 
     async def game_finished(self, game_status, game_id, mariners_team, opponent_team):
-        if game_status in FINAL_STATUSES and game_id not in self.notified["final"]:
+        """
+        Checks if game has finished and sends a message when it is over
+        """
+        if game_status in FINAL_STATUSES:
             wins = mariners_team["leagueRecord"]["wins"]
             losses = mariners_team["leagueRecord"]["losses"]
             pct = mariners_team["leagueRecord"]["pct"]
@@ -54,7 +73,7 @@ class StateManager():
                 self.add_custom_emoji_to_message(message, SAD_MS_PEPE_EMOJI)
                 self.add_custom_emoji_to_message(message, FEELS_MS_MAN_EMOJI)
                 await self.channel.send(BOOMS_GIF)
-            self.notified["final"].add(game_id)
+            save_status_to_file(FINISHED_STATUS, game_id)
 
     async def check_game_loop(self):
         await self.client.wait_until_ready()
@@ -76,7 +95,7 @@ class StateManager():
 @client.event
 async def on_ready():
     print(f'Logged in as {client.user}')
-    bot = StateManager(client)
+    bot = MarinersDiscordBot(client)
     client.loop.create_task(bot.check_game_loop())
 
 if __name__ == "__main__":
