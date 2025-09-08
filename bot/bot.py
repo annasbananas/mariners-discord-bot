@@ -23,7 +23,8 @@ class MarinersDiscordBot():
         """Adds a custom emoji to a Discord message."""
         emoji = get(self.channel.guild.emojis, name=emoji_name)
         if emoji:
-            message.add_reaction(emoji)
+            print(f"Adding {emoji_name} emoji to message...")
+            await message.add_reaction(emoji)
 
     async def check_statuses(self, status, game_id, mariners, opponent):
         """
@@ -34,16 +35,17 @@ class MarinersDiscordBot():
 
         simplified_status = STARTED_STATUS if status in LIVE_STATUSES else FINISHED_STATUS # simplify status to make it easy to differentiate between started and finished
         current_status = get_status_from_file() # safer to update every loop than store in memory and risk it not updating
-        
+        print(f"Current status: {current_status}")
         # Message for current game and status has already been sent, skip this loop
         if (
-            game_id == current_status.get("game_id", "") and
+            game_id == current_status.get("id", "") and
             simplified_status == current_status.get("status", "")
         ):
+            print("Message for current game and status has already been sent. Skipping...")
             return
 
-        self.game_started(status, game_id, mariners, opponent)
-        self.game_finished(status, game_id, mariners, opponent)
+        await self.game_started(status, game_id, mariners, opponent)
+        await self.game_finished(status, game_id, mariners, opponent)
 
     async def game_started(self, game_status, game_id, mariners_team, opponent_team):
         """
@@ -51,7 +53,7 @@ class MarinersDiscordBot():
         """
         if game_status in LIVE_STATUSES:
             await self.channel.send(f"🚨 The game is about to start! {mariners_team['team']['name']} vs. {opponent_team['team']['name']} 🚨")
-            save_status_to_file(STARTED_STATUS, game_id)
+            save_status_to_file(game_id, STARTED_STATUS)
 
     async def game_finished(self, game_status, game_id, mariners_team, opponent_team):
         """
@@ -66,14 +68,14 @@ class MarinersDiscordBot():
 
             if mariners_team["score"] > opponent_team["score"]:
                 message = await self.channel.send(f"🎉 GOMS! Final score - {mariners_team['team']['name']}: {mariners_team['score']} - {opponent_team['team']['name']}: {opponent_team['score']}. The Mariners are now {wins}-{losses} ({pct})")
-                self.add_custom_emoji_to_message(message, HAPPY_GRIFFEY_EMOJI)
+                await self.add_custom_emoji_to_message(message, HAPPY_GRIFFEY_EMOJI)
                 await self.channel.send(GOMS_GIF)
             else:
                 message = await self.channel.send(f"😞 BOOMS! Final score - {mariners_team['team']['name']}: {mariners_team['score']} - {opponent_team['team']['name']}: {opponent_team['score']}. The Mariners are now {wins}-{losses} ({pct})")
-                self.add_custom_emoji_to_message(message, SAD_MS_PEPE_EMOJI)
-                self.add_custom_emoji_to_message(message, FEELS_MS_MAN_EMOJI)
+                await self.add_custom_emoji_to_message(message, SAD_MS_PEPE_EMOJI)
+                await self.add_custom_emoji_to_message(message, FEELS_MS_MAN_EMOJI)
                 await self.channel.send(BOOMS_GIF)
-            save_status_to_file(FINISHED_STATUS, game_id)
+            save_status_to_file(game_id, FINISHED_STATUS)
 
     async def check_game_loop(self):
         await self.client.wait_until_ready()
