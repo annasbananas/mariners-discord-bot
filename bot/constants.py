@@ -1,7 +1,7 @@
 import os
 
-STARTED_STATUS = "started"
-FINISHED_STATUS = "finished"
+STARTED_STATUS = "STARTED"
+FINISHED_STATUS = "FINISHED"
 
 LIVE_STATUSES = [
     "In Progress", "Warmup", "Delayed Start", "Game Delayed",

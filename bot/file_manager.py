@@ -12,6 +12,14 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # If you are using a Docker volume, this path should be within the mounted directory.
 STATUS_FILE_PATH = 'data/status.json'
 
+def generate_cached_status(game_id, status, sent_status):
+    return {
+        "id": game_id,
+        "status": status,
+        "last_simplified_status_sent": sent_status,
+        "last_update_sent_at": datetime.now(timezone("America/Los_Angeles")).isoformat()
+    }
+
 def get_status_from_file():
     """
     Reads the status data from the JSON file.
@@ -21,13 +29,7 @@ def get_status_from_file():
         Returns a default dictionary if the file doesn't exist or is invalid.
     """
     # Define a default status dictionary for a clean slate
-    default_status = {
-        "game" : {
-                "id": "",
-                "status": "",
-                "last_update_sent_at": ""
-        }
-    }
+    default_status = generate_cached_status("", "", "")
 
     if not os.path.exists(STATUS_FILE_PATH):
         logging.warning(f"Status file not found at {STATUS_FILE_PATH}. Creating a new one.")
@@ -54,9 +56,9 @@ def get_status_from_file():
         # A generic catch-all for other potential issues
         logging.error(f"An unexpected error occurred while reading the status file: {e}")
 
-    return status_data.get("game", {})
+    return status_data
 
-def save_status_to_file(game_id, status):
+def save_status_to_file(obj):
     """
     Saves the provided status dictionary to the JSON file.
 
@@ -66,16 +68,8 @@ def save_status_to_file(game_id, status):
     try:
         # Create the directory if it doesn't exist
         os.makedirs(os.path.dirname(STATUS_FILE_PATH), exist_ok=True)
-        current_time = datetime.now(timezone("America/Los_Angeles")).isoformat()
-        current_status = {
-            "game" : {
-                "id": game_id,
-                "status": status,
-                "last_update_sent_at": current_time
-            }
-        }
         with open(STATUS_FILE_PATH, 'w') as f:
-            json.dump(current_status, f, indent=4)
+            json.dump(obj, f, indent=4)
         logging.info("Successfully saved status to file.")
         
     except Exception as e:

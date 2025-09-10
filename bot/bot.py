@@ -1,10 +1,9 @@
 import discord
 from discord.utils import get
 import asyncio
-from pytz import timezone
 from constants import *
 from utils import *
-from file_manager import get_status_from_file, save_status_to_file
+from file_manager import get_status_from_file, save_status_to_file, generate_cached_status
 
 def setup_client():
     intents = discord.Intents.default()
@@ -18,6 +17,7 @@ class MarinersDiscordBot():
     def __init__(self, client):
         self.client = client
         self.channel = None
+        self.cached_status = get_status_from_file()
 
     async def add_custom_emoji_to_message(self, message, emoji_name):
         """Adds a custom emoji to a Discord message."""
@@ -26,6 +26,11 @@ class MarinersDiscordBot():
             print(f"Adding {emoji_name} emoji to message...")
             await message.add_reaction(emoji)
 
+    def update_cache(self, game_id, game_status, message_status):
+        new_cached_status = generate_cached_status(game_id, game_status, message_status)
+        save_status_to_file(new_cached_status)
+        self.cached_status = new_cached_status
+
     async def check_statuses(self, status, game_id, mariners, opponent):
         """
         Checks the game status and determines whether a message should be sent or not.
@@ -33,19 +38,29 @@ class MarinersDiscordBot():
         This bot uses a simplified version of the status from MLB's website to track if either message has been sent.
         """
 
-        simplified_status = STARTED_STATUS if status in LIVE_STATUSES else FINISHED_STATUS # simplify status to make it easy to differentiate between started and finished
-        current_status = get_status_from_file() # safer to update every loop than store in memory and risk it not updating
-        print(f"Current status: {current_status}")
-        # Message for current game and status has already been sent, skip this loop
+        simplified_status = None
+        if status in LIVE_STATUSES:
+            simplified_status = STARTED_STATUS
+        elif status in FINAL_STATUSES:
+            simplified_status = FINISHED_STATUS
+        else:
+            return
+        
         if (
-            game_id == current_status.get("id", "") and
-            simplified_status == current_status.get("status", "")
+            simplified_status == STARTED_STATUS and 
+            self.cached_status.get("game_id") != game_id and
+            self.cached_status.get("last_simplified_status_sent") != STARTED_STATUS
         ):
-            print("Message for current game and status has already been sent. Skipping...")
+            await self.game_started(status, game_id, mariners, opponent)
             return
 
-        await self.game_started(status, game_id, mariners, opponent)
-        await self.game_finished(status, game_id, mariners, opponent)
+        if (
+            simplified_status == FINISHED_STATUS and 
+            self.cached_status.get("game_id") != game_id and
+            self.cached_status.get("last_simplified_status_sent") != FINAL_STATUSES
+        ):
+            await self.game_finished(status, game_id, mariners, opponent)
+            return
 
     async def game_started(self, game_status, game_id, mariners_team, opponent_team):
         """
@@ -53,7 +68,8 @@ class MarinersDiscordBot():
         """
         if game_status in LIVE_STATUSES:
             await self.channel.send(f"🚨 The game is about to start! {mariners_team['team']['name']} vs. {opponent_team['team']['name']} 🚨")
-            save_status_to_file(game_id, STARTED_STATUS)
+            self.update_cache(game_id, game_status, STARTED_STATUS)
+
 
     async def game_finished(self, game_status, game_id, mariners_team, opponent_team):
         """
@@ -75,7 +91,9 @@ class MarinersDiscordBot():
                 await self.add_custom_emoji_to_message(message, SAD_MS_PEPE_EMOJI)
                 await self.add_custom_emoji_to_message(message, FEELS_MS_MAN_EMOJI)
                 await self.channel.send(BOOMS_GIF)
-            save_status_to_file(game_id, FINISHED_STATUS)
+
+            self.update_cache(game_id, game_status, FINISHED_STATUS)
+
 
     async def check_game_loop(self):
         await self.client.wait_until_ready()
