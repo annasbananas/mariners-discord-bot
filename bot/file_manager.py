@@ -1,7 +1,8 @@
 import json
 import os
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
+from pytz import timezone
 
 # Configure a basic logger for better debugging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -21,7 +22,7 @@ def get_status_from_file():
     """
     # Define a default status dictionary for a clean slate
     default_status = {
-            "game" : {
+        "game" : {
                 "id": "",
                 "status": "",
                 "last_update_sent_at": ""
@@ -35,13 +36,12 @@ def get_status_from_file():
         # Write the default status to the file
         with open(STATUS_FILE_PATH, 'w') as f:
             json.dump(default_status, f, indent=4)
-        return default_status
 
     try:
         with open(STATUS_FILE_PATH, 'r') as f:
             status_data = json.load(f)
-        logging.info("Successfully read status from file.")
-        return status_data
+        logging.info(f"Successfully read status from file. Data: {status_data}")
+
 
     except json.JSONDecodeError:
         # This handles cases where the file might be empty or corrupted
@@ -49,12 +49,12 @@ def get_status_from_file():
         # Optionally, you can back up the corrupted file and create a new one
         os.rename(STATUS_FILE_PATH, f"{STATUS_FILE_PATH}.corrupted_{datetime.now().strftime('%Y%m%d%H%M%S')}")
         logging.warning("Corrupted file has been renamed. A new status file will be created.")
-        return default_status
 
     except Exception as e:
         # A generic catch-all for other potential issues
         logging.error(f"An unexpected error occurred while reading the status file: {e}")
-        return default_status
+
+    return status_data.get("game", {})
 
 def save_status_to_file(game_id, status):
     """
@@ -66,11 +66,12 @@ def save_status_to_file(game_id, status):
     try:
         # Create the directory if it doesn't exist
         os.makedirs(os.path.dirname(STATUS_FILE_PATH), exist_ok=True)
+        current_time = datetime.now(timezone("America/Los_Angeles")).isoformat()
         current_status = {
             "game" : {
                 "id": game_id,
                 "status": status,
-                "last_update_sent_at": datetime.now(timezone("America/Los_Angeles"))
+                "last_update_sent_at": current_time
             }
         }
         with open(STATUS_FILE_PATH, 'w') as f:

@@ -19,4 +19,4 @@ COPY bot/ .
 COPY data/ .
 
 # Run the bot
-CMD ["python", "bot.py"]
+CMD ["python", "bot/bot.py"]
