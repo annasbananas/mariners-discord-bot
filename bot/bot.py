@@ -1,9 +1,12 @@
 import discord
+import logging
 from discord.utils import get
 import asyncio
 from constants import *
 from utils import *
 from file_manager import get_status_from_file, save_status_to_file, generate_cached_status
+
+logger = logging.getLogger(__name__)
 
 def setup_client():
     intents = discord.Intents.default()
@@ -44,20 +47,23 @@ class MarinersDiscordBot():
         elif status in FINAL_STATUSES:
             simplified_status = FINISHED_STATUS
         else:
+            logger.info("Game status cannot be simplified. Skipping...")
             return
         
         if (
-            simplified_status == STARTED_STATUS and 
-            self.cached_status.get("game_id") != game_id and
+            simplified_status == STARTED_STATUS and
+            self.cached_status.get("id") != game_id and
             self.cached_status.get("last_simplified_status_sent") != STARTED_STATUS
         ):
             await self.game_started(status, game_id, mariners, opponent)
             return
 
         if (
-            simplified_status == FINISHED_STATUS and 
-            self.cached_status.get("game_id") != game_id and
-            self.cached_status.get("last_simplified_status_sent") != FINAL_STATUSES
+            simplified_status == FINISHED_STATUS and
+            (
+                self.cached_status.get("last_simplified_status_sent") != FINISHED_STATUS and 
+                self.cached_status.get("id") == game_id
+            )
         ):
             await self.game_finished(status, game_id, mariners, opponent)
             return
@@ -67,9 +73,9 @@ class MarinersDiscordBot():
         Checks if game has started and sends a message when it is about to start
         """
         if game_status in LIVE_STATUSES:
+            logger.info(f"Sending game={game_id} start message...")
             await self.channel.send(f"🚨 The game is about to start! {mariners_team['team']['name']} vs. {opponent_team['team']['name']} 🚨")
             self.update_cache(game_id, game_status, STARTED_STATUS)
-
 
     async def game_finished(self, game_status, game_id, mariners_team, opponent_team):
         """
@@ -80,9 +86,10 @@ class MarinersDiscordBot():
             losses = mariners_team["leagueRecord"]["losses"]
             pct = mariners_team["leagueRecord"]["pct"]
 
-            print(f"Final score: {mariners_team['score']} - {opponent_team['score']}. The Mariners are now {wins}-{losses} ({pct})")
 
             if mariners_team["score"] > opponent_team["score"]:
+                logger.info(f"Sending final score message: game={game_id}, wins={wins}, losses={losses}, pct={pct}")
+
                 message = await self.channel.send(f"🎉 GOMS! Final score - {mariners_team['team']['name']}: {mariners_team['score']} - {opponent_team['team']['name']}: {opponent_team['score']}. The Mariners are now {wins}-{losses} ({pct})")
                 await self.add_custom_emoji_to_message(message, HAPPY_GRIFFEY_EMOJI)
                 await self.channel.send(GOMS_GIF)
@@ -104,13 +111,12 @@ class MarinersDiscordBot():
                 # Deconstruct game_id and status
                 game_id = game["gamePk"]
                 status = game["status"]["detailedState"]
-                print(f"Game's status: {status}")
 
                 # Check game status and send corresponding message
                 await self.check_statuses(status, game_id, mariners, opponent)
 
-            print("Finished scan... waiting 10 minutes.")
-            await asyncio.sleep(600)  # Check every 10 minutes
+            logging.info("Finished scan... waiting 5 minutes.")
+            await asyncio.sleep(300)  # Check every 10 minutes
 
 @client.event
 async def on_ready():
