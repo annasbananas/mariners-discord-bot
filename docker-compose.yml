@@ -4,4 +4,5 @@ services:
     build: .
     volumes:
       - .:/app
+      - ~/.aws:/app/.aws
     env_file: .env
