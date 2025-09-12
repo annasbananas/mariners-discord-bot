@@ -1,5 +1,8 @@
 import os
 
+S3_BUCKET_NAME = "mariners-bot"
+S3_OBJECT_KEY = "status.json"
+
 STARTED_STATUS = "STARTED"
 FINISHED_STATUS = "FINISHED"
 
