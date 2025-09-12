@@ -1,3 +1,5 @@
 discord.py
 requests
 pytz
+boto3
+awscli
