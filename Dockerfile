@@ -1,22 +1,14 @@
 # Use official Python image
-FROM python:3.11-slim
+FROM public.ecr.aws/lambda/python:3.12
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+# Copy requirements.txt
+COPY requirements.txt ${LAMBDA_TASK_ROOT}
 
-# Set working directory
-WORKDIR /app
+# Install the specified packages
+RUN pip install -r requirements.txt
 
-# Install dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy function code
+COPY lambda_function.py ${LAMBDA_TASK_ROOT}
 
-# Copy bot code
-COPY bot/ .
-
-# Copy data
-COPY data/ .
-
-# Run the bot
-CMD ["python", "bot/bot.py"]
+# Set the CMD to your handler (could also be done as a parameter override outside of the Dockerfile)
+CMD [ "lambda_function.handler" ]
