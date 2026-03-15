@@ -1,8 +1,10 @@
 import datetime
 import logging
-from pytz import timezone
-from constants import *
 import requests
+
+from pytz import timezone
+from constants import MARINERS_ID
+from mlb.mlb_dataclasses import Game
 
 logger = logging.getLogger(__name__)
 

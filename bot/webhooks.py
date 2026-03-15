@@ -1,5 +1,5 @@
 import requests
-from constants import *
+from constants import WEBHOOK_URL
 import logging
 
 logger = logging.getLogger(__name__)

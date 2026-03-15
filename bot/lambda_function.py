@@ -1,49 +1,91 @@
-from mlb_api import *
-from s3 import *
-from constants import *
-from webhooks import *
+from datetime import datetime
 import logging
+import json
+
+from constants import (
+    MARINERS_ID,
+    S3_BUCKET_NAME,
+    S3_OBJECT_KEY,
+    LIVE_STATUSES,
+    FINAL_STATUSES,
+)
+from internal_status import InternalStatus
+from mlb.api import get_game
+from mlb.mlb_dataclasses import Game
+from s3 import get_s3_object, put_s3_object
+from webhooks import send_webhook
 
 logger = logging.getLogger(__name__)
 
+
 def get_current_status():
-    status = get_s3_object(S3_BUCKET_NAME, S3_OBJECT_KEY, "status.json")
-    return InternalStatus.from_dict(json.loads(status))
+    s3_object = get_s3_object(S3_BUCKET_NAME, S3_OBJECT_KEY)
+    status = s3_object["Body"].read().decode("utf-8")
+    if status:
+        return InternalStatus.from_dict(json.loads(status))
+    else:
+        return InternalStatus(None, "")
 
-def check_statuses(game):
-    gamePk = game.gamePk
+
+def check_scoring_changes(previous_game: Game, current_game: Game):
+    # Return: (home score, away score)
+    previous_score = (previous_game.teams.home.score, previous_game.teams.away.score)
+    current_score = (current_game.teams.home.score, current_game.teams.away.score)
+    if previous_score != current_score:
+        return current_score
+    else:
+        return False
+
+def check_statuses(game: Game, last_update: InternalStatus):
     status = game.status.detailedState
-
-    if game.teams.home.teamInfo.id == MARINERS_ID:
+    last_status = last_update.game.status.detailedState
+    
+    message = ""
+    if game.teams.home.team.id == MARINERS_ID:
         mariners = game.teams.home
         opponent = game.teams.away
     else:
         mariners = game.teams.away
         opponent = game.teams.home
-
-    if status in LIVE_STATUSES:
-        message = f"🚨 The game is about to start! {mariners.teamInfo.name} vs. {opponent.teamInfo.name} 🚨"
-    elif status in FINAL_STATUSES:
-        if mariners.score > opponent.score:
-            message = f"🎉 GOMS! Final score - {mariners.teamInfo.name}: {mariners.score} - {opponent.teamInfo.name}: {opponent.score}. The Mariners are now {mariners.leagueRecord.wins}-{mariners.leagueRecord.losses} ({mariners.leagueRecord.pct})"
-        else:
-            message = f"😞 BOOMS! Final score - {mariners.teamInfo.name}: {mariners.score} - {opponent.teamInfo.name}: {opponent.score}. The Mariners are now {mariners.leagueRecord.wins}-{mariners.leagueRecord.losses} ({mariners.leagueRecord.pct})"
+    
+    if status == last_status:
+        updated_score = check_scoring_changes(last_update.game, game)
+        if updated_score:
+            home_score, away_score = updated_score
+            message = f"Scoring update: {game.teams.home}-{home_score}, {game.teams.away}-{away_score}"
     else:
-        logger.info(f"Game status {status} is not supported.")
+        if status in LIVE_STATUSES:
+            message = f"🚨 The game is about to start! {mariners.team.name} vs. {opponent.team.name} 🚨"
+        elif status in FINAL_STATUSES:
+            if mariners.score > opponent.score:
+                message = f"🎉 GOMS! Final score - {mariners.team.name}: {mariners.score} - {opponent.team.name}: {opponent.score}. The Mariners are now {mariners.leagueRecord.wins}-{mariners.leagueRecord.losses} ({mariners.leagueRecord.pct})"
+            else:
+                message = f"😞 BOOMS! Final score - {mariners.team.name}: {mariners.score} - {opponent.team.name}: {opponent.score}. The Mariners are now {mariners.leagueRecord.wins}-{mariners.leagueRecord.losses} ({mariners.leagueRecord.pct})"
 
-    send_webhook(message)
+    if message:
+        send_webhook(message)
     update_status(game, datetime.now())
 
+
 def update_status(game, last_update):
-    internal_status = InternalStatus(game, last_update)
-    save_s3_object(S3_BUCKET_NAME, S3_OBJECT_KEY, "status.json", json.dumps(internal_status.to_dict()))
+    internal_status = InternalStatus(game=game, last_update=last_update)
+    put_s3_object(
+        S3_BUCKET_NAME,
+        S3_OBJECT_KEY,
+        json.dumps(internal_status.to_dict()),
+    )
+
 
 def main():
-    current_status = get_current_status()
+    last_update = get_current_status()
     game = get_game()
     if game:
-        check_statuses(game)
+        check_statuses(game, last_update)
 
 
-def lambda_handler(event, context):    
+def lambda_handler(event, context):
     result = main()
+
+
+if __name__ == "__main__":
+    main()

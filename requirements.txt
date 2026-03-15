@@ -2,4 +2,7 @@ discord.py
 requests
 pytz
 boto3
+botocore
+botocore[crt]
 awscli
+dataclasses
