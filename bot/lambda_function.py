@@ -84,7 +84,7 @@ def main():
 
 
 def lambda_handler(event, context):
-    result = main()
+    main()
 
 
 if __name__ == "__main__":
