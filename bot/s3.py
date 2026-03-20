@@ -19,25 +19,30 @@ def get_s3_object(bucket_name, object_key):
         s3_object = s3.get_object(Bucket=bucket_name, Key=object_key)
         if s3_object:
             logger.info(
-                f"Successfully downloaded {object_key} from bucket {bucket_name}"
+                "Successfully downloaded %s from bucket %s",
+                object_key,
+                bucket_name,
             )
             return s3_object
         else:
             logger.info("Could not find status...")
             return {}
     except NoCredentialsError:
-        print(
+        logger.error(
             "Error: AWS credentials not found. Please configure your AWS CLI or environment variables."
         )
+        return None
     except ClientError as e:
         if e.response["Error"]["Code"] == "404":
-            print(
-                f"Error: The object {object_key} was not found in bucket {bucket_name}."
+            logger.info(
+                "The object %s was not found in bucket %s.", object_key, bucket_name
             )
         else:
-            print(f"An unexpected error occurred: {e}")
+            logger.exception("Unexpected S3 error while reading object: %s", e)
+        return None
     except Exception as e:
-        print(f"An unexpected error occurred: {e}")
+        logger.exception("Unexpected error while reading S3 object: %s", e)
+        return None
 
 
 def put_s3_object(bucket_name, object_key, data):
@@ -52,15 +57,18 @@ def put_s3_object(bucket_name, object_key, data):
     try:
         s3.put_object(Bucket=bucket_name, Key=object_key, Body=data)
         logger.info(
-            f"Successfully uploaded data to bucket {bucket_name} as {object_key}"
+            "Successfully uploaded data to bucket %s as %s",
+            bucket_name,
+            object_key,
         )
     except NoCredentialsError:
-        print(
+        logger.error(
             "Error: AWS credentials not found. Please configure your AWS CLI or environment variables."
         )
+        return None
     except ClientError as e:
-        print(f"An unexpected error occurred: {e}")
-    except FileNotFoundError:
-        print(f"Error: The local file {local_filename} was not found.")
+        logger.exception("Unexpected S3 error while writing object: %s", e)
+        return None
     except Exception as e:
-        print(f"An unexpected error occurred: {e}")
+        logger.exception("Unexpected error while writing S3 object: %s", e)
+        return None

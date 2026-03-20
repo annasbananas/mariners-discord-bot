@@ -10,15 +10,18 @@ from constants import (
     FINAL_STATUSES,
 )
 from internal_status import InternalStatus
+from logging_config import configure_logging
 from mlb.api import get_game
 from mlb.mlb_dataclasses import Game
 from s3 import get_s3_object, put_s3_object
 from webhooks import send_webhook
 
+configure_logging()
 logger = logging.getLogger(__name__)
 
 
 def get_current_status():
+    logger.info("Looking for object: bucket=%s, key=%s", S3_BUCKET_NAME, S3_OBJECT_KEY)
     s3_object = get_s3_object(S3_BUCKET_NAME, S3_OBJECT_KEY)
     if not s3_object or "Body" not in s3_object:
         logger.info("Couldn't find S3 object")
@@ -26,8 +29,9 @@ def get_current_status():
 
     status = s3_object["Body"].read().decode("utf-8")
     if status:
-        logger.info("Found previous status")
-        return InternalStatus.from_dict(json.loads(status))
+        logger.info("Found previous status; status=%s", status)
+        internal_status = InternalStatus.from_dict(json.loads(status))
+        return internal_status
     else:
         return InternalStatus({}, "")
 
@@ -36,6 +40,7 @@ def check_scoring_changes(previous_game: Game, current_game: Game):
     # Return: (home score, away score)
     previous_score = (previous_game.teams.home.score, previous_game.teams.away.score)
     current_score = (current_game.teams.home.score, current_game.teams.away.score)
+    logger.info("Scoring update: previous_score=%s, current_score=%s", previous_score, current_score)
     if previous_score != current_score:
         return current_score
     else:
@@ -48,14 +53,17 @@ def check_statuses(game: Game, last_update: InternalStatus):
         if last_update and getattr(last_update, "game", None)
         else None
     )
-    
+    logger.info("Checking statuses; status=%s, last_status=%s", status, last_status)
     message = ""
     if game.teams.home.team.id == MARINERS_ID:
         mariners = game.teams.home
         opponent = game.teams.away
+        logger.info("Mariners are home; %s are away", opponent.team.name)
     else:
         mariners = game.teams.away
         opponent = game.teams.home
+        logger.info("Mariners are away; %s are home", opponent.team.name)
+
     
     if last_status is not None and status == last_status:
         updated_score = check_scoring_changes(last_update.game, game)
@@ -72,6 +80,7 @@ def check_statuses(game: Game, last_update: InternalStatus):
                 message = f"😞 BOOMS! Final score - {mariners.team.name}: {mariners.score} - {opponent.team.name}: {opponent.score}. The Mariners are now {mariners.leagueRecord.wins}-{mariners.leagueRecord.losses} ({mariners.leagueRecord.pct})"
 
     if message:
+        logger.info("Sending message: %s", message)
         send_webhook(message)
     update_status(game, datetime.now())
 
