@@ -2,7 +2,14 @@
 
 Start the container in interactive mode so you can inspect things live:
 
-`docker run -it --rm mariners-discord-bot /bin/bash`
+```
+docker run --rm -p 9000:8080 --env-file .env \
+  -e AWS_ACCESS_KEY_ID \
+  -e AWS_SECRET_ACCESS_KEY \
+  -e AWS_SESSION_TOKEN \
+  -e AWS_REGION=us-east-1 \
+  mariners-discord-bot-lambda
+```
 
 This drops you into the shell inside the container. From there, try:
 
