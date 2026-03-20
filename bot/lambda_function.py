@@ -20,11 +20,16 @@ logger = logging.getLogger(__name__)
 
 def get_current_status():
     s3_object = get_s3_object(S3_BUCKET_NAME, S3_OBJECT_KEY)
+    if not s3_object or "Body" not in s3_object:
+        logger.info("Couldn't find S3 object")
+        return InternalStatus({}, "")
+
     status = s3_object["Body"].read().decode("utf-8")
     if status:
+        logger.info("Found previous status")
         return InternalStatus.from_dict(json.loads(status))
     else:
-        return InternalStatus(None, "")
+        return InternalStatus({}, "")
 
 
 def check_scoring_changes(previous_game: Game, current_game: Game):
@@ -38,7 +43,11 @@ def check_scoring_changes(previous_game: Game, current_game: Game):
 
 def check_statuses(game: Game, last_update: InternalStatus):
     status = game.status.detailedState
-    last_status = last_update.game.status.detailedState
+    last_status = (
+        last_update.game.status.detailedState
+        if last_update and getattr(last_update, "game", None)
+        else None
+    )
     
     message = ""
     if game.teams.home.team.id == MARINERS_ID:
@@ -48,7 +57,7 @@ def check_statuses(game: Game, last_update: InternalStatus):
         mariners = game.teams.away
         opponent = game.teams.home
     
-    if status == last_status:
+    if last_status is not None and status == last_status:
         updated_score = check_scoring_changes(last_update.game, game)
         if updated_score:
             home_score, away_score = updated_score
