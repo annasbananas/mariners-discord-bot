@@ -40,6 +40,7 @@ def check_scoring_changes(previous_game: Game, current_game: Game):
     # Return: (home score, away score)
     previous_score = (previous_game.teams.home.score, previous_game.teams.away.score)
     current_score = (current_game.teams.home.score, current_game.teams.away.score)
+
     logger.info("Scoring update: previous_score=%s, current_score=%s", previous_score, current_score)
     if previous_score != current_score:
         return current_score
@@ -69,7 +70,7 @@ def check_statuses(game: Game, last_update: InternalStatus):
         updated_score = check_scoring_changes(last_update.game, game)
         if updated_score:
             home_score, away_score = updated_score
-            message = f"Scoring update: {game.teams.home}-{home_score}, {game.teams.away}-{away_score}"
+            message = f"Scoring update: {game.teams.home.team.name} - {home_score}, {game.teams.away.team.name} - {away_score}"
     else:
         if status in LIVE_STATUSES:
             message = f"🚨 The game is about to start! {mariners.team.name} vs. {opponent.team.name} 🚨"

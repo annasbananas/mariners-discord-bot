@@ -7,8 +7,7 @@ STARTED_STATUS = "STARTED"
 FINISHED_STATUS = "FINISHED"
 
 LIVE_STATUSES = [
-    "In Progress", "Warmup", "Delayed Start", "Game Delayed",
-    "Manager Challenge", "Review"
+    "In Progress"
 ]
 
 FINAL_STATUSES = [
