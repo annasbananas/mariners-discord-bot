@@ -1,13 +1,18 @@
 from datetime import datetime
 import logging
 import json
+import requests
+
 
 from constants import (
+    BOOMS_GIF,
+    GOMS_GIF,
     MARINERS_ID,
     S3_BUCKET_NAME,
     S3_OBJECT_KEY,
     LIVE_STATUSES,
     FINAL_STATUSES,
+    WEBHOOK_URL,
 )
 from internal_status import InternalStatus
 from logging_config import configure_logging
@@ -19,6 +24,14 @@ from webhooks import send_webhook
 configure_logging()
 logger = logging.getLogger(__name__)
 
+
+def send_gif_via_webhook(gif_url: str):
+    payload = {
+        "embeds": [
+            {"image": {"url": gif_url}}
+        ]
+    }
+    return requests.post(WEBHOOK_URL, json=payload, timeout=10)
 
 def get_current_status():
     logger.info("Looking for object: bucket=%s, key=%s", S3_BUCKET_NAME, S3_OBJECT_KEY)
@@ -65,24 +78,26 @@ def check_statuses(game: Game, last_update: InternalStatus):
         opponent = game.teams.home
         logger.info("Mariners are away; %s are home", opponent.team.name)
 
-    
     if last_status is not None and status == last_status:
         updated_score = check_scoring_changes(last_update.game, game)
         if updated_score:
             home_score, away_score = updated_score
             message = f"Scoring update: {game.teams.home.team.name} - {home_score}, {game.teams.away.team.name} - {away_score}"
+            send_webhook(message)
     else:
         if status in LIVE_STATUSES:
             message = f"🚨 The game is about to start! {mariners.team.name} vs. {opponent.team.name} 🚨"
+            send_webhook(message)
         elif status in FINAL_STATUSES:
             if mariners.score > opponent.score:
                 message = f"🎉 GOMS! Final score - {mariners.team.name}: {mariners.score} - {opponent.team.name}: {opponent.score}. The Mariners are now {mariners.leagueRecord.wins}-{mariners.leagueRecord.losses} ({mariners.leagueRecord.pct})"
+                send_webhook(message)
+                send_gif_via_webhook(gif_url=GOMS_GIF)
             else:
                 message = f"😞 BOOMS! Final score - {mariners.team.name}: {mariners.score} - {opponent.team.name}: {opponent.score}. The Mariners are now {mariners.leagueRecord.wins}-{mariners.leagueRecord.losses} ({mariners.leagueRecord.pct})"
-
-    if message:
-        logger.info("Sending message: %s", message)
-        send_webhook(message)
+                send_webhook(message)
+                send_gif_via_webhook(gif_url=BOOMS_GIF)
+    logger.info(message)
     update_status(game, datetime.now())
 
 
