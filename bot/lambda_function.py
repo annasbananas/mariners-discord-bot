@@ -96,7 +96,7 @@ def check_statuses(game: Game, last_update: InternalStatus):
                 send_webhook(message)
                 send_gif_via_webhook(gif_url=GOMS_GIF)
             else:
-                message = f"😞 BOOMS! Final score - {mariners.team.name}: {mariners.score} - {opponent.team.name}: {opponent.score}. The Mariners are now {mariners.leagueRecord.wins}-{mariners.leagueRecord.losses} ({mariners.leagueRecord.pct})"
+                message = f"😞 BOOMS! Final score\n{mariners.team.name}: {mariners.score} - {opponent.team.name}: {opponent.score}. \nThe Mariners are now {mariners.leagueRecord.wins}-{mariners.leagueRecord.losses} ({mariners.leagueRecord.pct})"
                 send_webhook(message)
                 send_gif_via_webhook(gif_url=BOOMS_GIF)
     logger.info(message)
