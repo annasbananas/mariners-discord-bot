@@ -25,6 +25,11 @@ configure_logging()
 logger = logging.getLogger(__name__)
 
 
+def _is_final_state(detailed_state):
+    """True if MLB detailedState is a game-ended status."""
+    return detailed_state is not None and detailed_state in FINAL_STATUSES
+
+
 def send_gif_via_webhook(gif_url: str):
     payload = {"embeds": [{"image": {"url": gif_url}}]}
     return requests.post(WEBHOOK_URL, json=payload, timeout=10)
@@ -91,7 +96,15 @@ def check_statuses(game: Game, last_update: InternalStatus):
             message = f"🚨 The game is about to start! {mariners.team.name} vs. {opponent.team.name} 🚨"
             send_webhook(message)
         elif status in FINAL_STATUSES:
-            if mariners.score > opponent.score:
+            # MLB often moves between final-ish strings (e.g. Game Over -> Final).
+            # Only announce once per game end, not on every relabel.
+            if _is_final_state(last_status):
+                logger.info(
+                    "Skipping duplicate final message; last_status=%s, status=%s",
+                    last_status,
+                    status,
+                )
+            elif mariners.score > opponent.score:
                 message = f"🎉 GOMS! Final score\n{mariners.team.name}: {mariners.score} - {opponent.team.name}: {opponent.score}.\nThe Mariners are now {mariners.leagueRecord.wins}-{mariners.leagueRecord.losses} ({mariners.leagueRecord.pct})"
                 send_webhook(message)
                 send_gif_via_webhook(gif_url=GOMS_GIF)
