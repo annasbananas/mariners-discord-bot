@@ -8,7 +8,8 @@ on:
 
 env:
   AWS_REGION: us-east-1                   # set this to your preferred AWS region, e.g. us-west-1
-  ECR_REPOSITORY: discord/mariners-bot           # set this to your Amazon ECR repository name
+  ECR_REPOSITORY: discord/mariners-bot    # set this to your Amazon ECR repository name
+  LAMBDA_FUNCTION_NAME: mariners-bot      # set this to your Lambda function name (must use this container image)
 
 permissions:
   id-token: write
@@ -19,6 +20,8 @@ jobs:
     name: Deploy
     runs-on: ubuntu-latest
     environment: production
+    outputs:
+      image: ${{ steps.build-image.outputs.image }}
 
     steps:
     - name: Checkout
@@ -51,4 +54,30 @@ jobs:
         docker build --provenance false -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
         echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+  update-lambda:
+    name: Update Lambda
+    needs: deploy
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1.7.0
+      with:
+        role-to-assume: arn:aws:iam::300773730175:role/github-oidc-role
+        role-session-name: GitHub_to_AWS_via_FederatedOIDC
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Update Lambda function to new image
+      env:
+        IMAGE_URI: ${{ needs.deploy.outputs.image }}
+      run: |
+        aws lambda update-function-code \
+          --function-name "${LAMBDA_FUNCTION_NAME}" \
+          --image-uri "${IMAGE_URI}"
 

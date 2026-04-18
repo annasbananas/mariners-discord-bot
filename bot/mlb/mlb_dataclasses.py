@@ -71,25 +71,35 @@ class Team:
     score: int
     splitSquad: bool
     seriesNumber: int
+    isWinner: Optional[bool]
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Team":
+        is_winner = d.get("isWinner")
+        if is_winner is None:
+            winner_flag: Optional[bool] = None
+        else:
+            winner_flag = bool(is_winner)
         return cls(
             team=TeamInfo.from_dict(d),
             leagueRecord=LeagueRecord.from_dict(d),
             score=d.get("score", 0),
             splitSquad=d.get("splitSquad", False),
             seriesNumber=d.get("seriesNumber", 0),
+            isWinner=winner_flag,
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "team": self.team.to_dict(),
             "leagueRecord": self.leagueRecord.to_dict(),
             "score": self.score,
             "splitSquad": self.splitSquad,
             "seriesNumber": self.seriesNumber,
         }
+        if self.isWinner is not None:
+            d["isWinner"] = self.isWinner
+        return d
 
 
 @dataclass
@@ -117,6 +127,29 @@ class Game:
     status: Status
     teams: Teams
     seriesDescription: str
+    gamesInSeries: int
+    seriesGameNumber: int
+    seriesNumber: int
+
+    @classmethod
+    def from_schedule_game(cls, game_raw: dict[str, Any]) -> "Game":
+        teams_raw = game_raw["teams"]
+        series_num = teams_raw["home"].get("seriesNumber") or teams_raw["away"].get("seriesNumber") or 0
+        return cls(
+            gamePk=game_raw["gamePk"],
+            gameGuid=game_raw.get("gameGuid", ""),
+            link=game_raw.get("link", ""),
+            gameType=game_raw.get("gameType", ""),
+            season=game_raw.get("season", ""),
+            gameDate=game_raw.get("gameDate", ""),
+            officialDate=game_raw.get("officialDate", ""),
+            status=Status.from_dict(game_raw),
+            teams=Teams.from_dict(teams_raw),
+            seriesDescription=game_raw.get("seriesDescription", ""),
+            gamesInSeries=int(game_raw.get("gamesInSeries") or 1),
+            seriesGameNumber=int(game_raw.get("seriesGameNumber") or 1),
+            seriesNumber=int(series_num),
+        )
 
     @classmethod
     def from_dict(cls, d: dict[str, Any] | None) -> Optional["Game"]:
@@ -129,18 +162,7 @@ class Game:
             if not dates or not dates[0].get("games"):
                 return None
             game_raw = dates[0]["games"][0]
-        return cls(
-            gamePk=game_raw["gamePk"],
-            gameGuid=game_raw.get("gameGuid", ""),
-            link=game_raw.get("link", ""),
-            gameType=game_raw.get("gameType", ""),
-            season=game_raw.get("season", ""),
-            gameDate=game_raw.get("gameDate", ""),
-            officialDate=game_raw.get("officialDate", ""),
-            status=Status.from_dict(game_raw),
-            teams=Teams.from_dict(game_raw["teams"]),
-            seriesDescription=game_raw.get("seriesDescription", ""),
-        )
+        return cls.from_schedule_game(game_raw)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -154,6 +176,9 @@ class Game:
             "status": self.status.to_dict(),
             "teams": self.teams.to_dict(),
             "seriesDescription": self.seriesDescription,
+            "gamesInSeries": self.gamesInSeries,
+            "seriesGameNumber": self.seriesGameNumber,
+            "seriesNumber": self.seriesNumber,
         }
         
 
