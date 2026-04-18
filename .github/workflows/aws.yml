@@ -9,7 +9,7 @@ on:
 env:
   AWS_REGION: us-east-1                   # set this to your preferred AWS region, e.g. us-west-1
   ECR_REPOSITORY: discord/mariners-bot    # set this to your Amazon ECR repository name
-  LAMBDA_FUNCTION_NAME: mariners-bot      # set this to your Lambda function name (must use this container image)
+  LAMBDA_FUNCTION_NAME: mariners-discord-bot  # set this to your Lambda function name (must use this container image)
 
 permissions:
   id-token: write
