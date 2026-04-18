@@ -206,6 +206,8 @@ def check_statuses(game: Game, last_update: InternalStatus):
                     message = f"🎉 GOMS! Final score\n{mariners.team.name}: {mariners.score} - {opponent.team.name}: {opponent.score}.\nThe Mariners are now {mariners.leagueRecord.wins}-{mariners.leagueRecord.losses} ({mariners.leagueRecord.pct})"
                 send_webhook(message)
                 send_gif_via_webhook(gif_url=GOMS_GIF)
+                send_webhook(_final_message_with_standings(message, game.season))
+
             else:
                 sweep = series_sweep_outcome(game, MARINERS_ID)
                 if sweep == "opponent_sweep":
@@ -219,7 +221,7 @@ def check_statuses(game: Game, last_update: InternalStatus):
                     message = f"😞 BOOMS! Final score\n{mariners.team.name}: {mariners.score} - {opponent.team.name}: {opponent.score}. \nThe Mariners are now {mariners.leagueRecord.wins}-{mariners.leagueRecord.losses} ({mariners.leagueRecord.pct})"
                 send_webhook(message)
                 send_gif_via_webhook(gif_url=BOOMS_GIF)
-    send_webhook(_final_message_with_standings(message, game.season))
+
     logger.info(message)
     update_status(game, datetime.now())
 
