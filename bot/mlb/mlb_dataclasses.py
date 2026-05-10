@@ -130,11 +130,37 @@ class Game:
     gamesInSeries: int
     seriesGameNumber: int
     seriesNumber: int
+    linescore_current_inning: Optional[int] = None
+    linescore_inning_ordinal: Optional[str] = None
+    linescore_inning_half: Optional[str] = None
+
+    def linescore_position_label(self) -> Optional[str]:
+        """Human-readable inning position from schedule linescore, if present."""
+        if self.linescore_current_inning is None:
+            return None
+        ordinal = self.linescore_inning_ordinal or str(self.linescore_current_inning)
+        half = (self.linescore_inning_half or "").strip()
+        if not half:
+            return f"{ordinal} inning"
+        short_half = {"Top": "Top", "Bottom": "Bot", "Middle": "Mid", "End": "End"}.get(
+            half, half
+        )
+        return f"{short_half} {ordinal}"
 
     @classmethod
     def from_schedule_game(cls, game_raw: dict[str, Any]) -> "Game":
         teams_raw = game_raw["teams"]
         series_num = teams_raw["home"].get("seriesNumber") or teams_raw["away"].get("seriesNumber") or 0
+        ls = game_raw.get("linescore") or {}
+        lc_inning = ls.get("currentInning")
+        lc_ordinal = ls.get("currentInningOrdinal")
+        lc_half = ls.get("inningHalf") or ls.get("inningState")
+        if lc_inning is None:
+            lc_inning = game_raw.get("linescore_current_inning")
+        if lc_ordinal is None:
+            lc_ordinal = game_raw.get("linescore_inning_ordinal")
+        if lc_half is None:
+            lc_half = game_raw.get("linescore_inning_half")
         return cls(
             gamePk=game_raw["gamePk"],
             gameGuid=game_raw.get("gameGuid", ""),
@@ -149,6 +175,9 @@ class Game:
             gamesInSeries=int(game_raw.get("gamesInSeries") or 1),
             seriesGameNumber=int(game_raw.get("seriesGameNumber") or 1),
             seriesNumber=int(series_num),
+            linescore_current_inning=lc_inning,
+            linescore_inning_ordinal=lc_ordinal,
+            linescore_inning_half=lc_half,
         )
 
     @classmethod
@@ -165,7 +194,7 @@ class Game:
         return cls.from_schedule_game(game_raw)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "gamePk": self.gamePk,
             "gameGuid": self.gameGuid,
             "link": self.link,
@@ -180,6 +209,13 @@ class Game:
             "seriesGameNumber": self.seriesGameNumber,
             "seriesNumber": self.seriesNumber,
         }
+        if self.linescore_current_inning is not None:
+            d["linescore_current_inning"] = self.linescore_current_inning
+        if self.linescore_inning_ordinal is not None:
+            d["linescore_inning_ordinal"] = self.linescore_inning_ordinal
+        if self.linescore_inning_half is not None:
+            d["linescore_inning_half"] = self.linescore_inning_half
+        return d
         
 
 

@@ -14,7 +14,10 @@ logger = logging.getLogger(__name__)
 def get_mlb_url(team_id):
     today = datetime.datetime.now(timezone("America/Los_Angeles")).date()
     date_str = today.strftime("%Y-%m-%d")
-    return f"https://statsapi.mlb.com/api/v1/schedule?teamId={team_id}&date={date_str}&sportId=1"
+    return (
+        f"https://statsapi.mlb.com/api/v1/schedule?teamId={team_id}&date={date_str}"
+        f"&sportId=1&hydrate=linescore"
+    )
 
 
 def get_schedule_url(team_id: int, start_date: str, end_date: str) -> str:

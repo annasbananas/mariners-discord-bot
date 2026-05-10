@@ -1,8 +1,9 @@
-from datetime import datetime, timedelta
+from dataclasses import dataclass
+from datetime import datetime
 import logging
 import json
 import requests
-from typing import Literal, Optional
+from typing import Callable, Literal
 
 
 from constants import (
@@ -18,8 +19,9 @@ from constants import (
 )
 from internal_status import InternalStatus
 from logging_config import configure_logging
-from mlb.api import get_al_west_standings_text, get_game, get_schedule_games
-from mlb.mlb_dataclasses import Game
+from mlb.api import get_al_west_standings_text, get_game
+from mlb.mlb_dataclasses import Game, Team
+from mlb.series import series_sweep_outcome
 from s3 import get_s3_object, put_s3_object
 from webhooks import send_webhook
 
@@ -39,71 +41,6 @@ def _abstract_game_state(game: Game | None):
     return getattr(game.status, "abstractGameState", None)
 
 
-SweepKind = Literal["mariners_sweep", "opponent_sweep"]
-
-
-def _mariners_won_game(game: Game, mariners_id: int) -> Optional[bool]:
-    """True/False if decided from MLB fields or score; None if unclear."""
-    if game.teams.home.team.id == mariners_id:
-        side, other = game.teams.home, game.teams.away
-    elif game.teams.away.team.id == mariners_id:
-        side, other = game.teams.away, game.teams.home
-    else:
-        return None
-    if side.isWinner is True:
-        return True
-    if side.isWinner is False:
-        return False
-    if other.isWinner is True:
-        return False
-    if other.isWinner is False:
-        return True
-    if side.score == other.score:
-        return None
-    return side.score > other.score
-
-
-def series_sweep_outcome(game: Game, mariners_id: int) -> Optional[SweepKind]:
-    """
-    After a series finale, return whether the Mariners swept or were swept.
-    Uses schedule games sharing seriesNumber and opponent; None if not a sweep or uncertain.
-    """
-    if game.gamesInSeries < 2 or game.seriesGameNumber != game.gamesInSeries:
-        return None
-    if not game.seriesNumber:
-        return None
-    opponent_id = (
-        game.teams.away.team.id
-        if game.teams.home.team.id == mariners_id
-        else game.teams.home.team.id
-    )
-    try:
-        end = datetime.strptime(game.officialDate, "%Y-%m-%d").date()
-    except ValueError:
-        return None
-    start = end - timedelta(days=7)
-    start_s, end_s = start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
-    candidates = [
-        g
-        for g in get_schedule_games(mariners_id, start_s, end_s)
-        if g.season == game.season
-        and g.seriesNumber == game.seriesNumber
-        and mariners_id in (g.teams.home.team.id, g.teams.away.team.id)
-        and opponent_id in (g.teams.home.team.id, g.teams.away.team.id)
-    ]
-    finals = [g for g in candidates if g.status.detailedState in FINAL_STATUSES]
-    if len(finals) != game.gamesInSeries:
-        return None
-    outcomes = [_mariners_won_game(g, mariners_id) for g in finals]
-    if any(o is None for o in outcomes):
-        return None
-    if all(outcomes):
-        return "mariners_sweep"
-    if not any(outcomes):
-        return "opponent_sweep"
-    return None
-
-
 def _should_announce_game_start(last_game: Game | None, current_game: Game) -> bool:
     """
     Fire only on Preview -> Live, not when detailedState flips during a live game
@@ -120,11 +57,178 @@ def send_gif_via_webhook(gif_url: str):
     return requests.post(WEBHOOK_URL, json=payload, timeout=10)
 
 
-def _final_message_with_standings(body: str, season: str) -> str:
+def _send_standings_if_any(season: str) -> None:
     block = get_al_west_standings_text(season)
     if block:
-        return f"{body}\n\n{block}"
-    return body
+        send_webhook(block)
+
+
+def _post_final_sequence(score_line: str, gif_url: str, season: str) -> None:
+    send_webhook(score_line)
+    send_gif_via_webhook(gif_url=gif_url)
+    _send_standings_if_any(season)
+
+
+@dataclass(frozen=True)
+class GameNotifyContext:
+    """Snapshot of current game + Mariners/opponent sides for notification handlers."""
+
+    game: Game
+    last_game: Game | None
+    mariners: Team
+    opponent: Team
+
+    @property
+    def status(self) -> str:
+        return self.game.status.detailedState
+
+    @property
+    def last_status(self) -> str | None:
+        if self.last_game is None or getattr(self.last_game, "status", None) is None:
+            return None
+        return self.last_game.status.detailedState
+
+
+def _notify_context(game: Game, last_update: InternalStatus) -> GameNotifyContext:
+    last_game = last_update.game if last_update and getattr(last_update, "game", None) else None
+    if game.teams.home.team.id == MARINERS_ID:
+        mariners, opponent = game.teams.home, game.teams.away
+        logger.info("Mariners are home; %s are away", opponent.team.name)
+    else:
+        mariners, opponent = game.teams.away, game.teams.home
+        logger.info("Mariners are away; %s are home", opponent.team.name)
+    return GameNotifyContext(game=game, last_game=last_game, mariners=mariners, opponent=opponent)
+
+
+def _notify_scoring_if_changed(ctx: GameNotifyContext) -> str:
+    """While detailedState is unchanged, post score changes only."""
+    updated_score = check_scoring_changes(ctx.last_game, ctx.game)
+    if not updated_score:
+        return ""
+    home_score, away_score = updated_score
+    inning = ctx.game.linescore_position_label()
+    header = (
+        f"Scoring update ({inning}):\n"
+        if inning
+        else "Scoring update:\n"
+    )
+    message = (
+        f"{header}{ctx.game.teams.home.team.name} - {home_score}\n"
+        f"{ctx.game.teams.away.team.name} - {away_score}"
+    )
+    send_webhook(message)
+    return message
+
+
+FinalOutcome = Literal[
+    "mariners_win_regular",
+    "mariners_win_sweep",
+    "mariners_loss_regular",
+    "mariners_loss_sweep",
+    "tie",
+]
+
+
+@dataclass(frozen=True)
+class FinalAnnouncement:
+    score_line: str
+    gif_url: str
+
+
+def _classify_final_outcome(ctx: GameNotifyContext) -> FinalOutcome:
+    sweep = series_sweep_outcome(ctx.game, MARINERS_ID)
+    m_score, o_score = ctx.mariners.score, ctx.opponent.score
+    if m_score > o_score:
+        return "mariners_win_sweep" if sweep == "mariners_sweep" else "mariners_win_regular"
+    if m_score < o_score:
+        return "mariners_loss_sweep" if sweep == "opponent_sweep" else "mariners_loss_regular"
+    return "tie"
+
+
+def _final_announcement_for_outcome(ctx: GameNotifyContext, outcome: FinalOutcome) -> FinalAnnouncement:
+    mar, opp = ctx.mariners, ctx.opponent
+    if outcome == "mariners_win_sweep":
+        return FinalAnnouncement(
+            score_line=(
+                f"🧹 GOMS! The Mariners swept the {opp.team.name}! "
+                f"Final: {mar.team.name} {mar.score}, {opp.team.name} {opp.score}."
+            ),
+            gif_url=GOMS_SWEEP_GIF,
+        )
+    if outcome == "mariners_win_regular":
+        return FinalAnnouncement(
+            score_line=(
+                f"🎉 GOMS! Final — {mar.team.name}: {mar.score} - "
+                f"{opp.team.name}: {opp.score}"
+            ),
+            gif_url=GOMS_GIF,
+        )
+    if outcome == "mariners_loss_sweep":
+        return FinalAnnouncement(
+            score_line=(
+                f"🧹 BOOMS! The {opp.team.name} swept the Mariners. "
+                f"Final: {mar.team.name} {mar.score}, {opp.team.name} {opp.score}."
+            ),
+            gif_url=BOOMS_SWEEP_GIF,
+        )
+    if outcome == "mariners_loss_regular":
+        return FinalAnnouncement(
+            score_line=(
+                f"😞 BOOMS! Final — {mar.team.name}: {mar.score} - "
+                f"{opp.team.name}: {opp.score}"
+            ),
+            gif_url=BOOMS_GIF,
+        )
+    return FinalAnnouncement(
+        score_line=(
+            f"⚾ Final tie — {mar.team.name}: {mar.score} - {opp.team.name}: {opp.score}"
+        ),
+        gif_url=GOMS_GIF,
+    )
+
+
+def _handle_game_start_notification(ctx: GameNotifyContext) -> str | None:
+    if not _should_announce_game_start(ctx.last_game, ctx.game):
+        return None
+    message = (
+        f"🚨 The game is about to start! {ctx.mariners.team.name} vs. "
+        f"{ctx.opponent.team.name} 🚨"
+    )
+    send_webhook(message)
+    return message
+
+
+def _handle_final_notification(ctx: GameNotifyContext) -> str | None:
+    if ctx.status not in FINAL_STATUSES:
+        return None
+    if _is_final_state(ctx.last_status):
+        logger.info(
+            "Skipping duplicate final message; last_status=%s, status=%s",
+            ctx.last_status,
+            ctx.status,
+        )
+        return ""
+    outcome = _classify_final_outcome(ctx)
+    announcement = _final_announcement_for_outcome(ctx, outcome)
+    _post_final_sequence(announcement.score_line, announcement.gif_url, ctx.game.season)
+    return announcement.score_line
+
+
+_STATUS_TRANSITION_HANDLERS: tuple[
+    Callable[[GameNotifyContext], str | None],
+    ...,
+] = (
+    _handle_game_start_notification,
+    _handle_final_notification,
+)
+
+
+def _notify_on_status_transition(ctx: GameNotifyContext) -> str:
+    for handler in _STATUS_TRANSITION_HANDLERS:
+        result = handler(ctx)
+        if result is not None:
+            return result
+    return ""
 
 
 def get_current_status():
@@ -160,69 +264,13 @@ def check_scoring_changes(previous_game: Game, current_game: Game):
 
 
 def check_statuses(game: Game, last_update: InternalStatus):
-    status = game.status.detailedState
-    last_game = last_update.game if last_update and getattr(last_update, "game", None) else None
-    last_status = last_game.status.detailedState if last_game and getattr(last_game, "status", None) else None
-    logger.info("Checking statuses; status=%s, last_status=%s", status, last_status)
-    message = ""
-    if game.teams.home.team.id == MARINERS_ID:
-        mariners = game.teams.home
-        opponent = game.teams.away
-        logger.info("Mariners are home; %s are away", opponent.team.name)
+    ctx = _notify_context(game, last_update)
+    logger.info("Checking statuses; status=%s, last_status=%s", ctx.status, ctx.last_status)
+
+    if ctx.last_status is not None and ctx.status == ctx.last_status:
+        message = _notify_scoring_if_changed(ctx)
     else:
-        mariners = game.teams.away
-        opponent = game.teams.home
-        logger.info("Mariners are away; %s are home", opponent.team.name)
-
-    if last_status is not None and status == last_status:
-        updated_score = check_scoring_changes(last_update.game, game)
-        if updated_score:
-            home_score, away_score = updated_score
-            message = f"Scoring update:\n{game.teams.home.team.name} - {home_score}\n{game.teams.away.team.name} - {away_score}"
-            send_webhook(message)
-    else:
-        if _should_announce_game_start(last_game, game):
-            message = f"🚨 The game is about to start! {mariners.team.name} vs. {opponent.team.name} 🚨"
-            send_webhook(message)
-        elif status in FINAL_STATUSES:
-            # MLB often moves between final-ish strings (e.g. Game Over -> Final).
-            # Only announce once per game end, not on every relabel.
-            if _is_final_state(last_status):
-                logger.info(
-                    "Skipping duplicate final message; last_status=%s, status=%s",
-                    last_status,
-                    status,
-                )
-            elif mariners.score > opponent.score:
-                sweep = series_sweep_outcome(game, MARINERS_ID)
-                if sweep == "mariners_sweep":
-                    message = (
-                        f"🧹 GOMS! The Mariners swept the {opponent.team.name}!\n"
-                        f"Final: {mariners.team.name} {mariners.score}, {opponent.team.name} {opponent.score}.\n"
-                        f"The Mariners are now {mariners.leagueRecord.wins}-{mariners.leagueRecord.losses} ({mariners.leagueRecord.pct})"
-                    )
-                    send_gif_via_webhook(gif_url=GOMS_SWEEP_GIF)
-                else:
-                    message = f"🎉 GOMS! Final score\n{mariners.team.name}: {mariners.score} - {opponent.team.name}: {opponent.score}.\nThe Mariners are now {mariners.leagueRecord.wins}-{mariners.leagueRecord.losses} ({mariners.leagueRecord.pct})"
-                send_webhook(message)
-                send_gif_via_webhook(gif_url=GOMS_GIF)
-                send_webhook(_final_message_with_standings(message, game.season))
-
-            else:
-                sweep = series_sweep_outcome(game, MARINERS_ID)
-                if sweep == "opponent_sweep":
-                    message = (
-                        f"🧹 BOOMS! The {opponent.team.name} swept the Mariners.\n"
-                        f"Final: {mariners.team.name} {mariners.score}, {opponent.team.name} {opponent.score}.\n"
-                        f"The Mariners are now {mariners.leagueRecord.wins}-{mariners.leagueRecord.losses} ({mariners.leagueRecord.pct})"
-                    )
-                    send_gif_via_webhook(gif_url=BOOMS_SWEEP_GIF)
-                else:
-                    message = f"😞 BOOMS! Final score\n{mariners.team.name}: {mariners.score} - {opponent.team.name}: {opponent.score}. \nThe Mariners are now {mariners.leagueRecord.wins}-{mariners.leagueRecord.losses} ({mariners.leagueRecord.pct})"
-                send_webhook(message)
-                send_gif_via_webhook(gif_url=BOOMS_GIF)
-                send_webhook(_final_message_with_standings(message, game.season))
-
+        message = _notify_on_status_transition(ctx)
 
     logger.info(message)
     update_status(game, datetime.now())
